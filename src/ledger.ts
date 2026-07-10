@@ -75,6 +75,10 @@ const upstreamOkStmt = db.prepare(
 const upstreamErrorStmt = db.prepare(
   `UPDATE requests SET status = 'upstream_error', error = ? WHERE id = ?`,
 );
+const cacheHitStmt = db.prepare(
+  `UPDATE requests SET prompt_tokens = ?, completion_tokens = ?, upstream_cost_usd = 0,
+   billed_usd = ?, cache = 'HIT', status = 'upstream_ok' WHERE id = ?`,
+);
 const settledStmt = db.prepare(
   `UPDATE requests SET status = 'settled', settled_atomic = ?, payer = ?, tx_hash = ? WHERE id = ?`,
 );
@@ -139,6 +143,9 @@ export const ledger = {
   },
   markUpstreamError(id: string, error: string): void {
     upstreamErrorStmt.run(error.slice(0, 500), id);
+  },
+  markCacheHit(id: string, promptTokens: number, completionTokens: number, billedUsd: number): void {
+    cacheHitStmt.run(promptTokens, completionTokens, billedUsd, id);
   },
   markSettled(id: string, settledAtomic: string, payer: string, txHash: string): void {
     settledStmt.run(settledAtomic, payer, txHash, id);

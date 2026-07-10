@@ -62,4 +62,13 @@ export const cfg = {
    * also the effective minimum charge per request.
    */
   minBillUsd: Number(process.env.MIN_BILL_USD ?? 0.001),
+  /**
+   * Cache-hit pricing: fraction of the *upstream* cost billed on a hit
+   * (misses bill cost x markup). Hits cost us nothing, so nearly the whole
+   * payment is margin while the buyer pays roughly half the provider price.
+   */
+  hitMultiplierPrivate: Number(process.env.HIT_MULTIPLIER_PRIVATE ?? 0.55),
+  hitMultiplierShared: Number(process.env.HIT_MULTIPLIER_SHARED ?? 0.35),
+  cacheTtlMs: Number(process.env.CACHE_TTL_DAYS ?? 7) * 24 * 3600_000,
+  cacheMaxTtlMs: 30 * 24 * 3600_000,
 };

@@ -28,6 +28,17 @@ export function createMockUpstream() {
     });
   });
 
+  app.post("/v1/embeddings", async (c) => {
+    const body = (await c.req.json()) as { model?: string; input?: unknown };
+    const promptTokens = Math.ceil(JSON.stringify(body.input ?? "").length / 4);
+    return c.json({
+      object: "list",
+      data: [{ object: "embedding", index: 0, embedding: [0.01, -0.02, 0.03] }],
+      model: body.model,
+      usage: { prompt_tokens: promptTokens, total_tokens: promptTokens },
+    });
+  });
+
   return app;
 }
 

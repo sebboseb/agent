@@ -70,3 +70,32 @@ export function actualCostUsd(model: ModelInfo, usage: Usage): number {
     1_000_000
   );
 }
+
+/** Embeddings bill input tokens only. Verified against pricing 2026-07-10. */
+export const EMBEDDING_MODELS: Record<string, { inputPerMtok: number }> = {
+  "text-embedding-3-small": { inputPerMtok: 0.02 },
+  "text-embedding-3-large": { inputPerMtok: 0.13 },
+};
+
+export interface EmbeddingsBody {
+  model?: string;
+  input?: unknown;
+  dimensions?: number;
+  encoding_format?: string;
+  [key: string]: unknown;
+}
+
+export function estimateEmbeddingsCeilingUsd(body: EmbeddingsBody): number {
+  const model = body.model ? EMBEDDING_MODELS[body.model] : undefined;
+  if (!model) return 0.001;
+  const inputTokens = Math.ceil(JSON.stringify(body.input ?? "").length / 3);
+  const usd = ((inputTokens * model.inputPerMtok) / 1_000_000) * cfg.markup;
+  return Math.max(usd, cfg.minBillUsd, 0.001);
+}
+
+export function actualEmbeddingsCostUsd(
+  model: { inputPerMtok: number },
+  usage: { prompt_tokens: number },
+): number {
+  return (usage.prompt_tokens * model.inputPerMtok) / 1_000_000;
+}

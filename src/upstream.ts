@@ -1,5 +1,5 @@
 import { cfg } from "./config.js";
-import { effectiveMaxTokens, type ChatBody, type Usage } from "./models.js";
+import { effectiveMaxTokens, type ChatBody, type EmbeddingsBody, type Usage } from "./models.js";
 
 /**
  * Fields forwarded upstream. Everything else is dropped — notably `stream`
@@ -70,4 +70,35 @@ export async function callUpstream(body: ChatBody): Promise<UpstreamResult> {
     throw new UpstreamError(502, "upstream response missing usage — cannot bill");
   }
   return { json, usage };
+}
+
+const EMBEDDINGS_FORWARDED = ["model", "input", "dimensions", "encoding_format", "user"] as const;
+
+export interface EmbeddingsUpstreamResult {
+  json: Record<string, unknown>;
+  usage: { prompt_tokens: number };
+}
+
+export async function callEmbeddingsUpstream(body: EmbeddingsBody): Promise<EmbeddingsUpstreamResult> {
+  const forwarded: Record<string, unknown> = {};
+  for (const field of EMBEDDINGS_FORWARDED) {
+    if (body[field] !== undefined) forwarded[field] = body[field];
+  }
+  const res = await fetch(`${cfg.openaiBaseUrl}/embeddings`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${cfg.openaiApiKey}`,
+    },
+    body: JSON.stringify(forwarded),
+  });
+  if (!res.ok) {
+    throw new UpstreamError(res.status, await res.text());
+  }
+  const json = (await res.json()) as Record<string, unknown>;
+  const usage = json.usage as { prompt_tokens?: number } | undefined;
+  if (!usage || typeof usage.prompt_tokens !== "number") {
+    throw new UpstreamError(502, "upstream response missing usage — cannot bill");
+  }
+  return { json, usage: { prompt_tokens: usage.prompt_tokens } };
 }

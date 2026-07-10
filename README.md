@@ -1,9 +1,16 @@
 # x402 inference gateway
 
-OpenAI-compatible chat completions, paid per call in USDC over [x402](https://x402.org).
-Uses the `upto` scheme: the buyer authorizes a ceiling computed from `max_tokens`,
-and is settled for **actual token usage × markup** (default cost + 4%). Upstream
-failures and bad requests cancel the payment — the buyer pays nothing.
+OpenAI-compatible **chat completions and embeddings**, paid per call in USDC over
+[x402](https://x402.org). Uses the `upto` scheme: the buyer authorizes a ceiling
+computed from `max_tokens`, and is settled for **actual token usage × markup**
+(default cost + 4%). Upstream failures and bad requests cancel the payment — the
+buyer pays nothing.
+
+**Cache tier**: deterministic requests (chat at `temperature: 0`; all embeddings)
+are cached exact-match, **private per payer**. Identical repeats are billed at
+~55% of provider price (`X-Cache: HIT`) — loop agents get cheaper automatically.
+Opt-in cross-tenant pool via `X-Cache-Scope: shared` (~35%). Controls:
+`X-Cache: bypass|force`, `X-Cache-TTL: <seconds>`.
 
 ## Layout
 

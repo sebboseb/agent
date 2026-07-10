@@ -11,22 +11,50 @@ import { MODELS } from "./models.js";
 export const SERVICE_NAME = "x402 inference gateway";
 
 export const RESOURCE_PATH = "/v1/chat/completions";
+export const EMBEDDINGS_PATH = "/v1/embeddings";
+
+export function publicBase(): string {
+  return (cfg.publicBaseUrl ?? `http://localhost:${cfg.port}`).replace(/\/$/, "");
+}
 
 export function publicResourceUrl(): string {
-  const base = (cfg.publicBaseUrl ?? `http://localhost:${cfg.port}`).replace(/\/$/, "");
-  return `${base}${RESOURCE_PATH}`;
+  return `${publicBase()}${RESOURCE_PATH}`;
+}
+
+export function publicEmbeddingsUrl(): string {
+  return `${publicBase()}${EMBEDDINGS_PATH}`;
 }
 
 // Bazaar semantic search ranks on this text (<=500 chars): task verbs agents
-// query for, current model names, and the price hook.
+// query for, current model names, and the price hooks (markup + cache).
 export const DESCRIPTION =
   "LLM inference API for AI agents: OpenAI-compatible chat completions paid " +
   "per request in USDC on Base — no account or API key needed. Summarize, " +
   "classify, extract, translate, generate text and chat with " +
-  `${Object.keys(MODELS).slice(0, 5).join(", ")} and more. Lowest markup on ` +
-  `x402: upstream cost + ${Math.round((cfg.markup - 1) * 100)}%, billed on ` +
-  "actual token usage (upto scheme), from $0.001 per call. Standard OpenAI " +
-  "POST format — point your existing client at this URL.";
+  `${Object.keys(MODELS).slice(0, 5).join(", ")} and more. Misses billed at ` +
+  `upstream cost + ${Math.round((cfg.markup - 1) * 100)}% on actual token usage (upto scheme); ` +
+  `deterministic repeats (temperature 0) hit our cache and are billed at ` +
+  `${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price — your loops get cheaper ` +
+  "automatically. From $0.001/call, standard OpenAI POST format.";
+
+export const EMBEDDINGS_DESCRIPTION =
+  "Text embeddings API for AI agents: OpenAI-compatible /v1/embeddings paid " +
+  "per request in USDC on Base — no account or API key. Embed documents for " +
+  "RAG, semantic search, clustering, deduplication with text-embedding-3-small " +
+  "or text-embedding-3-large. Embeddings are deterministic, so repeated texts " +
+  `hit our cache and bill at ${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price — ` +
+  `re-embedding a corpus costs roughly half. Misses at upstream cost + ` +
+  `${Math.round((cfg.markup - 1) * 100)}%, from $0.001/call. Standard OpenAI POST format.`;
+
+export const EMBEDDINGS_TAGS = [
+  "embeddings",
+  "rag",
+  "semantic-search",
+  "vector",
+  "openai",
+  "text-embedding-3-small",
+  "ai",
+];
 
 export const TAGS = [
   "inference",
@@ -88,6 +116,45 @@ export function discoveryExtension(): Record<string, unknown> {
     input: INPUT_EXAMPLE,
     inputSchema: INPUT_SCHEMA,
     output: { example: OUTPUT_EXAMPLE },
+  });
+}
+
+export const EMBEDDINGS_INPUT_SCHEMA = {
+  properties: {
+    model: {
+      type: "string",
+      enum: ["text-embedding-3-small", "text-embedding-3-large"],
+      description: "Embedding model",
+    },
+    input: {
+      description: "String or array of strings to embed",
+    },
+    dimensions: {
+      type: "number",
+      description: "Optional output dimensionality (model-dependent)",
+    },
+  },
+  required: ["model", "input"],
+};
+
+export const EMBEDDINGS_INPUT_EXAMPLE = {
+  model: "text-embedding-3-small",
+  input: "The quick brown fox jumps over the lazy dog",
+};
+
+export const EMBEDDINGS_OUTPUT_EXAMPLE = {
+  object: "list",
+  data: [{ object: "embedding", index: 0, embedding: [0.0023, -0.0091, 0.0154] }],
+  model: "text-embedding-3-small",
+  usage: { prompt_tokens: 9, total_tokens: 9 },
+};
+
+export function embeddingsDiscoveryExtension(): Record<string, unknown> {
+  return declareDiscoveryExtension({
+    bodyType: "json",
+    input: EMBEDDINGS_INPUT_EXAMPLE,
+    inputSchema: EMBEDDINGS_INPUT_SCHEMA,
+    output: { example: EMBEDDINGS_OUTPUT_EXAMPLE },
   });
 }
 

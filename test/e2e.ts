@@ -29,6 +29,9 @@ process.env.OPENAI_API_KEY = "sk-mock";
 process.env.PAY_TO_ADDRESS = receiver.address;
 process.env.LEDGER_DB = DB_PATH;
 process.env.PORT = String(GATEWAY_PORT);
+// Tiny minimum bill so cache-hit discounts are observable in assertions
+// (production floor is CDP's $0.001 settlement minimum).
+process.env.MIN_BILL_USD = "0.0000001";
 
 for (const suffix of ["", "-wal", "-shm"]) {
   try {
@@ -112,7 +115,80 @@ async function main() {
   assert.equal(bad.status, 400, "unknown model should 400 (payment canceled, not settled)");
   console.log("PASS unknown model -> 400, payment canceled");
 
-  // 5. Self-hosted discovery surfaces
+  // 5. Cache: identical deterministic request from the same payer -> HIT, cheaper
+  const chatBody = JSON.stringify({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: "Classify this as spam or ham: win a free cruise" }],
+    max_tokens: 32,
+    temperature: 0,
+  });
+  const post = (fetcher: typeof fetch, path: string, body: string, headers: Record<string, string> = {}) =>
+    fetcher(`${gateway}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body,
+    });
+
+  const miss1 = await post(fetchWithPay, "/v1/chat/completions", chatBody);
+  assert.equal(miss1.headers.get("x-cache"), "MISS");
+  const missBilled = Number(miss1.headers.get("x-billed-usd"));
+  const hit1 = await post(fetchWithPay, "/v1/chat/completions", chatBody);
+  assert.equal(hit1.headers.get("x-cache"), "HIT", "identical repeat should HIT");
+  const hitBilled = Number(hit1.headers.get("x-billed-usd"));
+  assert.ok(hitBilled < missBilled, `hit ($${hitBilled}) should be cheaper than miss ($${missBilled})`);
+  assert.deepEqual(await hit1.json(), await miss1.json(), "hit must return the identical response");
+  console.log(`PASS cache hit: miss $${missBilled} -> hit $${hitBilled} (${Math.round((hitBilled / missBilled) * 100)}%)`);
+
+  // 6. Private isolation: a DIFFERENT payer must not see the first payer's cache
+  const buyer2 = privateKeyToAccount(generatePrivateKey());
+  const client2 = new x402Client().register("eip155:84532", new UptoEvmScheme(buyer2));
+  const fetchWithPay2 = wrapFetchWithPayment(fetch, client2);
+  const other = await post(fetchWithPay2, "/v1/chat/completions", chatBody);
+  assert.equal(other.headers.get("x-cache"), "MISS", "different payer must MISS (private isolation)");
+  console.log("PASS private cache isolation across payers");
+
+  // 7. Shared scope opt-in: both payers share a pool
+  const sharedBody = JSON.stringify({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: "What is the capital of France?" }],
+    max_tokens: 16,
+    temperature: 0,
+  });
+  const shared1 = await post(fetchWithPay, "/v1/chat/completions", sharedBody, { "X-Cache-Scope": "shared" });
+  assert.equal(shared1.headers.get("x-cache"), "MISS");
+  const shared2 = await post(fetchWithPay2, "/v1/chat/completions", sharedBody, { "X-Cache-Scope": "shared" });
+  assert.equal(shared2.headers.get("x-cache"), "HIT", "shared scope should HIT across payers");
+  assert.ok(
+    Number(shared2.headers.get("x-billed-usd")) < Number(shared1.headers.get("x-billed-usd")),
+    "shared hit should be cheaper",
+  );
+  console.log("PASS shared-scope cross-payer hit");
+
+  // 8. Non-deterministic requests are never cached silently
+  const tempBody = JSON.stringify({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: "Write a haiku" }],
+    max_tokens: 32,
+    temperature: 0.9,
+  });
+  const t1 = await post(fetchWithPay, "/v1/chat/completions", tempBody);
+  const t2 = await post(fetchWithPay, "/v1/chat/completions", tempBody);
+  assert.equal(t1.headers.get("x-cache"), "MISS");
+  assert.equal(t2.headers.get("x-cache"), "MISS", "temperature 0.9 must never HIT");
+  console.log("PASS non-deterministic requests bypass cache");
+
+  // 9. Embeddings: paid roundtrip, deterministic -> repeat HITs
+  const embBody = JSON.stringify({ model: "text-embedding-3-small", input: "hello embeddings world" });
+  const emb1 = await post(fetchWithPay, "/v1/embeddings", embBody);
+  assert.equal(emb1.status, 200, `embeddings should 200, got ${emb1.status}: ${await emb1.clone().text()}`);
+  assert.equal(emb1.headers.get("x-cache"), "MISS");
+  const embJson = (await emb1.json()) as { data: { embedding: number[] }[] };
+  assert.ok(Array.isArray(embJson.data[0].embedding), "embeddings response shape");
+  const emb2 = await post(fetchWithPay, "/v1/embeddings", embBody);
+  assert.equal(emb2.headers.get("x-cache"), "HIT", "identical embedding input should HIT");
+  console.log("PASS embeddings: paid roundtrip + deterministic cache hit");
+
+  // 10. Self-hosted discovery surfaces
   const wellKnown = (await (await fetch(`${gateway}/.well-known/x402.json`)).json()) as {
     x402Version: number;
     resources: { accepts: { scheme: string }[]; extensions?: Record<string, unknown> }[];

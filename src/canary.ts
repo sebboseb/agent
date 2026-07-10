@@ -65,22 +65,34 @@ async function runOnce(): Promise<void> {
   const client = new x402Client().register(cfg.network as never, new UptoEvmScheme(signer));
   const fetchWithPay = wrapFetchWithPayment(fetch, client);
 
-  const res = await fetchWithPay(`${cfg.publicBaseUrl}/v1/chat/completions`, {
+  // Alternate endpoints so BOTH catalog entries stay inside the Bazaar's
+  // 30-day activity window. A unique nonce in the prompt keeps the canary
+  // from hitting its own cache — the point is to exercise the full paid path.
+  const nonce = Date.now();
+  const useEmbeddings = Math.random() < 0.5;
+  const [path, body] = useEmbeddings
+    ? ["/v1/embeddings", { model: "text-embedding-3-small", input: `canary ${nonce}` }]
+    : [
+        "/v1/chat/completions",
+        {
+          model: process.env.CANARY_MODEL ?? "gpt-5.4-nano",
+          messages: [{ role: "user", content: `Reply with exactly: ok ${nonce}` }],
+          max_tokens: 8,
+          temperature: 0,
+        },
+      ];
+
+  const res = await fetchWithPay(`${cfg.publicBaseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: process.env.CANARY_MODEL ?? "gpt-5.4-nano",
-      messages: [{ role: "user", content: "Reply with exactly: ok" }],
-      max_tokens: 8,
-      temperature: 0,
-    }),
+    body: JSON.stringify(body),
   });
   if (res.ok) {
     console.log(
-      `[canary] OK — billed $${res.headers.get("x-billed-usd")}, USDC left ${formatUnits(usdc, 6)}`,
+      `[canary] OK ${path} — billed $${res.headers.get("x-billed-usd")} (${res.headers.get("x-cache")}), USDC left ${formatUnits(usdc, 6)}`,
     );
   } else {
-    console.error(`[canary] FAILED status ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    console.error(`[canary] FAILED ${path} status ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
 }
 

@@ -8,9 +8,16 @@ import {
   INPUT_SCHEMA,
   INPUT_EXAMPLE,
   OUTPUT_EXAMPLE,
+  EMBEDDINGS_DESCRIPTION,
+  EMBEDDINGS_TAGS,
+  EMBEDDINGS_INPUT_SCHEMA,
+  EMBEDDINGS_INPUT_EXAMPLE,
+  EMBEDDINGS_OUTPUT_EXAMPLE,
   discoveryExtension,
+  embeddingsDiscoveryExtension,
   representativeAccepts,
   publicResourceUrl,
+  publicEmbeddingsUrl,
 } from "./catalog.js";
 
 /**
@@ -44,6 +51,16 @@ function manifest() {
         accepts: representativeAccepts(),
         extensions: discoveryExtension(),
       },
+      {
+        resource: publicEmbeddingsUrl(),
+        type: "http",
+        method: "POST",
+        description: EMBEDDINGS_DESCRIPTION,
+        serviceName: SERVICE_NAME,
+        tags: EMBEDDINGS_TAGS,
+        accepts: representativeAccepts(),
+        extensions: embeddingsDiscoveryExtension(),
+      },
     ],
   };
 }
@@ -68,13 +85,24 @@ token usage at upstream cost + ${Math.round((cfg.markup - 1) * 100)}% (minimum $
 response carries X-Billed-Usd and X-Quoted-Ceiling-Usd billing-transparency
 headers. Streaming and n>1 are not supported.
 
-## Endpoint
+## Endpoints
 
 - POST ${base}/v1/chat/completions — standard OpenAI request body
+- POST ${base}/v1/embeddings — standard OpenAI embeddings body (text-embedding-3-small/-large)
+
+## Cache — repeats cost roughly half
+
+Deterministic requests (chat at temperature 0; all embeddings) are cached
+exact-match, private per payer. A repeat identical request is a cache HIT
+billed at ${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price instead of cost + ${Math.round((cfg.markup - 1) * 100)}%. Opt into the
+cross-tenant pool with X-Cache-Scope: shared for ${Math.round(cfg.hitMultiplierShared * 100)}%. Controls:
+X-Cache: bypass|force, X-Cache-TTL: seconds. Receipt: X-Cache: HIT|MISS header.
 
 ## Models (USD per 1M tokens, before markup)
 
 ${modelTable}
+- text-embedding-3-small: $0.02/M input tokens (+${Math.round((cfg.markup - 1) * 100)}%)
+- text-embedding-3-large: $0.13/M input tokens (+${Math.round((cfg.markup - 1) * 100)}%)
 
 ## Integration
 
@@ -125,6 +153,39 @@ discovery.get("/openapi.json", (c) => {
               description:
                 "Chat completion (headers: X-Billed-Usd, X-Quoted-Ceiling-Usd, X-Cache, PAYMENT-RESPONSE)",
               content: { "application/json": { example: OUTPUT_EXAMPLE } },
+            },
+            "402": {
+              description:
+                "Payment required — decode the base64 `payment-required` response header for the x402 quote",
+            },
+            "400": { description: "Invalid request or unknown model" },
+            "429": { description: "Gateway spend cap reached, retry shortly" },
+            "502": { description: "Upstream provider error (payment canceled, nothing billed)" },
+          },
+        },
+      },
+      "/v1/embeddings": {
+        post: {
+          operationId: "createEmbedding",
+          summary: "OpenAI-compatible embeddings, paid per request via x402",
+          description:
+            "Standard OpenAI embeddings request. Deterministic, so identical repeats are " +
+            `cache hits billed at ${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price; misses at cost x ${cfg.markup}. ` +
+            "Same x402 402/pay/retry flow as chat completions.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { type: "object", ...EMBEDDINGS_INPUT_SCHEMA },
+                example: EMBEDDINGS_INPUT_EXAMPLE,
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Embedding list (headers: X-Billed-Usd, X-Quoted-Ceiling-Usd, X-Cache, PAYMENT-RESPONSE)",
+              content: { "application/json": { example: EMBEDDINGS_OUTPUT_EXAMPLE } },
             },
             "402": {
               description:
