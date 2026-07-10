@@ -112,6 +112,25 @@ async function main() {
   assert.equal(bad.status, 400, "unknown model should 400 (payment canceled, not settled)");
   console.log("PASS unknown model -> 400, payment canceled");
 
+  // 5. Self-hosted discovery surfaces
+  const wellKnown = (await (await fetch(`${gateway}/.well-known/x402.json`)).json()) as {
+    x402Version: number;
+    resources: { accepts: { scheme: string }[]; extensions?: Record<string, unknown> }[];
+  };
+  assert.equal(wellKnown.x402Version, 2);
+  assert.equal(wellKnown.resources[0].accepts[0].scheme, "upto");
+  assert.ok(wellKnown.resources[0].extensions, "manifest should carry bazaar extension");
+  const llms = await (await fetch(`${gateway}/llms.txt`)).text();
+  assert.ok(llms.startsWith("# x402 inference gateway"), "llms.txt should lead with H1");
+  assert.ok(llms.includes("gpt-5.4-nano"), "llms.txt should list models");
+  const openapi = (await (await fetch(`${gateway}/openapi.json`)).json()) as {
+    openapi: string;
+    paths: Record<string, unknown>;
+  };
+  assert.ok(openapi.openapi.startsWith("3.1"));
+  assert.ok(openapi.paths["/v1/chat/completions"], "openapi should document the endpoint");
+  console.log("PASS discovery surfaces: /.well-known/x402.json, /llms.txt, /openapi.json");
+
   console.log("\nALL E2E CHECKS PASSED");
   process.exit(0);
 }

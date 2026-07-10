@@ -10,8 +10,15 @@ import {
   type HTTPRequestContext,
 } from "@x402/core/server";
 import { UptoEvmScheme } from "@x402/evm/upto/server";
-import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { createFacilitatorConfig } from "@coinbase/x402";
+import {
+  SERVICE_NAME,
+  DESCRIPTION,
+  TAGS,
+  discoveryExtension,
+  publicResourceUrl,
+} from "./catalog.js";
+import { discovery } from "./discovery.js";
 import { cfg } from "./config.js";
 import { MODELS, estimateCeilingUsd, actualCostUsd, type ChatBody } from "./models.js";
 import { ledger } from "./ledger.js";
@@ -82,76 +89,13 @@ export function createGateway() {
         price: dynamicCeiling,
         maxTimeoutSeconds: 300,
       },
-      // Bazaar semantic search ranks on this text (<=500 chars): task verbs
-      // agents query for, current model names, and the price hook.
-      description:
-        "LLM inference API for AI agents: OpenAI-compatible chat completions paid " +
-        "per request in USDC on Base — no account or API key needed. Summarize, " +
-        "classify, extract, translate, generate text and chat with " +
-        `${Object.keys(MODELS).slice(0, 5).join(", ")} and more. Lowest markup on ` +
-        `x402: upstream cost + ${Math.round((cfg.markup - 1) * 100)}%, billed on ` +
-        "actual token usage (upto scheme), from $0.001 per call. Standard OpenAI " +
-        "POST format — point your existing client at this URL.",
+      description: DESCRIPTION,
       mimeType: "application/json",
-      serviceName: "x402 inference gateway",
-      tags: [
-        "inference",
-        "llm",
-        "openai",
-        "chat-completions",
-        "gpt-5.4",
-        "gpt-5.4-nano",
-        "gpt-4o-mini",
-        "summarization",
-        "classification",
-        "text-generation",
-        "ai",
-      ],
-      ...(cfg.publicBaseUrl
-        ? { resource: `${cfg.publicBaseUrl.replace(/\/$/, "")}/v1/chat/completions` }
-        : {}),
+      serviceName: SERVICE_NAME,
+      tags: TAGS,
+      ...(cfg.publicBaseUrl ? { resource: publicResourceUrl() } : {}),
       // Bazaar discovery: how agents find and learn to call this endpoint.
-      extensions: declareDiscoveryExtension({
-        bodyType: "json",
-        input: {
-          model: "gpt-5.4-nano",
-          messages: [{ role: "user", content: "Summarize this in one sentence: ..." }],
-          max_tokens: 256,
-          temperature: 0,
-        },
-        inputSchema: {
-          properties: {
-            model: {
-              type: "string",
-              enum: Object.keys(MODELS),
-              description: "Upstream model to run",
-            },
-            messages: {
-              type: "array",
-              description: "OpenAI chat messages array",
-            },
-            max_tokens: {
-              type: "number",
-              description: "Output cap; the authorized payment ceiling scales with it",
-            },
-          },
-          required: ["model", "messages"],
-        },
-        output: {
-          example: {
-            id: "chatcmpl-abc123",
-            object: "chat.completion",
-            choices: [
-              {
-                index: 0,
-                message: { role: "assistant", content: "One-sentence summary." },
-                finish_reason: "stop",
-              },
-            ],
-            usage: { prompt_tokens: 42, completion_tokens: 12, total_tokens: 54 },
-          },
-        },
-      }),
+      extensions: discoveryExtension(),
     },
   };
 
@@ -192,6 +136,7 @@ export function createGateway() {
     });
   });
   app.get("/healthz", (c) => c.json({ ok: true }));
+  app.route("/", discovery);
   // Operator dashboard (unpaid): live revenue + request feed from the ledger.
   app.route("/dashboard", dashboard);
 
