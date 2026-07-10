@@ -11,6 +11,13 @@ export interface ModelInfo {
 }
 
 export const MODELS: Record<string, ModelInfo> = {
+  // Current generation (verified against the official pricing page 2026-07-10)
+  "gpt-5.4-nano": { inputPerMtok: 0.2, outputPerMtok: 1.25 },
+  "gpt-5.4-mini": { inputPerMtok: 0.75, outputPerMtok: 4.5 },
+  "gpt-5.4": { inputPerMtok: 2.5, outputPerMtok: 15 },
+  "gpt-5.5": { inputPerMtok: 5, outputPerMtok: 30 },
+  // Legacy: unlisted on the pricing page but still served; agents pinned to
+  // these still find us. Prices are the last published rates.
   "gpt-4o-mini": { inputPerMtok: 0.15, outputPerMtok: 0.6 },
   "gpt-4o": { inputPerMtok: 2.5, outputPerMtok: 10 },
   "gpt-4.1-mini": { inputPerMtok: 0.4, outputPerMtok: 1.6 },

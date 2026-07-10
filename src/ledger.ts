@@ -29,6 +29,43 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_payer ON requests(payer);
 `);
 
+export interface Summary {
+  requests: number;
+  settled: number;
+  revenue_usd: number;
+  settled_upstream_usd: number;
+  tokens: number;
+  payers: number;
+}
+export interface Bucket {
+  bucket: number;
+  requests: number;
+  revenue_usd: number;
+}
+export interface ModelRow {
+  model: string;
+  requests: number;
+  revenue_usd: number;
+}
+export interface StatusRow {
+  status: string;
+  count: number;
+}
+export interface RecentRow {
+  id: string;
+  ts: number;
+  model: string;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  quoted_ceiling_usd: number;
+  billed_usd: number | null;
+  settled_atomic: string | null;
+  payer: string | null;
+  tx_hash: string | null;
+  status: string;
+  error: string | null;
+}
+
 const insertStmt = db.prepare(
   `INSERT INTO requests (id, ts, model, quoted_ceiling_usd, status) VALUES (?, ?, ?, ?, 'pending')`,
 );
@@ -51,6 +88,40 @@ const canceledStmt = db.prepare(
 const spendStmt = db.prepare(
   `SELECT COALESCE(SUM(COALESCE(upstream_cost_usd, quoted_ceiling_usd)), 0) AS spent
    FROM requests WHERE ts > ? AND status != 'upstream_error'`,
+);
+
+// Dashboard aggregates. Revenue = what actually moved on-chain (settled_atomic,
+// 6-decimal USDC); billed_usd on un-settled rows is money in flight, not revenue.
+const summaryStmt = db.prepare(
+  `SELECT
+     COUNT(*) AS requests,
+     SUM(CASE WHEN status = 'settled' THEN 1 ELSE 0 END) AS settled,
+     COALESCE(SUM(CASE WHEN status = 'settled' THEN CAST(settled_atomic AS REAL) END), 0) / 1e6 AS revenue_usd,
+     COALESCE(SUM(CASE WHEN status = 'settled' THEN upstream_cost_usd END), 0) AS settled_upstream_usd,
+     COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tokens,
+     COUNT(DISTINCT payer) AS payers
+   FROM requests WHERE ts >= ? AND ts < ?`,
+);
+const bucketsStmt = db.prepare(
+  // CAST, not integer division: better-sqlite3 binds JS numbers as REAL.
+  `SELECT CAST(ts / ? AS INTEGER) * ? AS bucket,
+     COUNT(*) AS requests,
+     COALESCE(SUM(CASE WHEN status = 'settled' THEN CAST(settled_atomic AS REAL) END), 0) / 1e6 AS revenue_usd
+   FROM requests WHERE ts >= ? GROUP BY bucket ORDER BY bucket`,
+);
+const byModelStmt = db.prepare(
+  `SELECT model,
+     COUNT(*) AS requests,
+     COALESCE(SUM(CASE WHEN status = 'settled' THEN CAST(settled_atomic AS REAL) END), 0) / 1e6 AS revenue_usd
+   FROM requests WHERE ts >= ? GROUP BY model ORDER BY revenue_usd DESC, requests DESC`,
+);
+const byStatusStmt = db.prepare(
+  `SELECT status, COUNT(*) AS count FROM requests WHERE ts >= ? GROUP BY status`,
+);
+const recentStmt = db.prepare(
+  `SELECT id, ts, model, prompt_tokens, completion_tokens, quoted_ceiling_usd,
+          billed_usd, settled_atomic, payer, tx_hash, status, error
+   FROM requests WHERE ts >= ? ORDER BY ts DESC LIMIT ?`,
 );
 
 export const ledger = {
@@ -80,6 +151,21 @@ export const ledger = {
   },
   upstreamSpendUsdSince(tsMs: number): number {
     return (spendStmt.get(tsMs) as { spent: number }).spent;
+  },
+  summary(fromMs: number, toMs: number): Summary {
+    return summaryStmt.get(fromMs, toMs) as Summary;
+  },
+  bucketsSince(tsMs: number, bucketMs: number): Bucket[] {
+    return bucketsStmt.all(bucketMs, bucketMs, tsMs) as Bucket[];
+  },
+  byModelSince(tsMs: number): ModelRow[] {
+    return byModelStmt.all(tsMs) as ModelRow[];
+  },
+  byStatusSince(tsMs: number): StatusRow[] {
+    return byStatusStmt.all(tsMs) as StatusRow[];
+  },
+  recentSince(tsMs: number, limit: number): RecentRow[] {
+    return recentStmt.all(tsMs, limit) as RecentRow[];
   },
   get(id: string): unknown {
     return db.prepare(`SELECT * FROM requests WHERE id = ?`).get(id);

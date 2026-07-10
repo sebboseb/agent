@@ -16,6 +16,7 @@ import { cfg } from "./config.js";
 import { MODELS, estimateCeilingUsd, actualCostUsd, type ChatBody } from "./models.js";
 import { ledger } from "./ledger.js";
 import { callUpstream, UpstreamError } from "./upstream.js";
+import { dashboard } from "./dashboard.js";
 
 /**
  * x402 inference gateway.
@@ -81,15 +82,31 @@ export function createGateway() {
         price: dynamicCeiling,
         maxTimeoutSeconds: 300,
       },
+      // Bazaar semantic search ranks on this text (<=500 chars): task verbs
+      // agents query for, current model names, and the price hook.
       description:
-        "OpenAI-compatible chat completions, pay per call in USDC. " +
-        "upto scheme: you authorize a ceiling based on max_tokens, and are billed " +
-        `actual token usage at cost + ${Math.round((cfg.markup - 1) * 100)}%. ` +
-        `Models: ${Object.keys(MODELS).join(", ")}. ` +
-        "Standard OpenAI request format (streaming not supported).",
+        "LLM inference API for AI agents: OpenAI-compatible chat completions paid " +
+        "per request in USDC on Base — no account or API key needed. Summarize, " +
+        "classify, extract, translate, generate text and chat with " +
+        `${Object.keys(MODELS).slice(0, 5).join(", ")} and more. Lowest markup on ` +
+        `x402: upstream cost + ${Math.round((cfg.markup - 1) * 100)}%, billed on ` +
+        "actual token usage (upto scheme), from $0.001 per call. Standard OpenAI " +
+        "POST format — point your existing client at this URL.",
       mimeType: "application/json",
       serviceName: "x402 inference gateway",
-      tags: ["inference", "llm", "openai", "chat-completions", "ai"],
+      tags: [
+        "inference",
+        "llm",
+        "openai",
+        "chat-completions",
+        "gpt-5.4",
+        "gpt-5.4-nano",
+        "gpt-4o-mini",
+        "summarization",
+        "classification",
+        "text-generation",
+        "ai",
+      ],
       ...(cfg.publicBaseUrl
         ? { resource: `${cfg.publicBaseUrl.replace(/\/$/, "")}/v1/chat/completions` }
         : {}),
@@ -97,7 +114,7 @@ export function createGateway() {
       extensions: declareDiscoveryExtension({
         bodyType: "json",
         input: {
-          model: "gpt-4o-mini",
+          model: "gpt-5.4-nano",
           messages: [{ role: "user", content: "Summarize this in one sentence: ..." }],
           max_tokens: 256,
           temperature: 0,
@@ -141,21 +158,42 @@ export function createGateway() {
   const app = new Hono();
 
   // Unpaid info endpoints: model list with pricing lets agents estimate before paying.
-  app.get("/", (c) =>
-    c.json({
+  app.get("/", (c) => {
+    const baseUrl = cfg.publicBaseUrl ?? `http://localhost:${cfg.port}`;
+    return c.json({
       service: "x402 inference gateway",
-      endpoint: "POST /v1/chat/completions",
+      what: "OpenAI-compatible chat completions, paid per request in USDC via x402. No account, no API key.",
+      endpoint: `POST ${baseUrl}/v1/chat/completions`,
       network: cfg.network,
-      pricing: `upstream cost x ${cfg.markup}, billed on actual usage (upto scheme)`,
-      models: Object.fromEntries(
-        Object.entries(MODELS).map(([name, m]) => [
-          name,
-          { usd_per_mtok_input: m.inputPerMtok, usd_per_mtok_output: m.outputPerMtok },
-        ]),
-      ),
-    }),
-  );
+      pricing: {
+        rule: `upstream cost x ${cfg.markup}, billed on ACTUAL token usage (x402 'upto' scheme quotes a ceiling from max_tokens)`,
+        minimum_usd_per_call: cfg.minBillUsd,
+        models_usd_per_mtok: Object.fromEntries(
+          Object.entries(MODELS).map(([name, m]) => [
+            name,
+            { input: m.inputPerMtok, output: m.outputPerMtok },
+          ]),
+        ),
+      },
+      quickstart: {
+        typescript:
+          "const fetchWithPay = wrapFetchWithPayment(fetch, new x402Client().register('" +
+          cfg.network +
+          "', new UptoEvmScheme(account))); await fetchWithPay('" +
+          baseUrl +
+          "/v1/chat/completions', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ model: 'gpt-5.4-nano', messages: [{ role: 'user', content: 'hello' }], max_tokens: 64 }) })",
+        packages: "@x402/fetch @x402/evm viem",
+        note: "Any x402-capable client works. Request body is standard OpenAI chat completions format; streaming and n>1 are not supported. Response headers X-Billed-Usd and X-Quoted-Ceiling-Usd show exact billing.",
+      },
+      limits: {
+        default_max_tokens: cfg.defaultMaxTokens,
+        hard_max_tokens: cfg.hardMaxTokens,
+      },
+    });
+  });
   app.get("/healthz", (c) => c.json({ ok: true }));
+  // Operator dashboard (unpaid): live revenue + request feed from the ledger.
+  app.route("/dashboard", dashboard);
 
   app.use(paymentMiddleware(routes, resourceServer));
 

@@ -4,29 +4,38 @@ import { withBazaar } from "@x402/extensions/bazaar";
 import { createFacilitatorConfig } from "@coinbase/x402";
 
 /**
- * After the first settled mainnet payment, confirm the gateway shows up in the
- * Bazaar catalog. Pass the deployed URL via PUBLIC_BASE_URL or first arg.
+ * Confirm the gateway is in the Bazaar catalog. The catalog's server-side
+ * filters are ignored and its ordering is not recency-based (verified
+ * 2026-07-10), so the only reliable check is a full paginated scan (~260
+ * requests). Matches on host or PAY_TO_ADDRESS.
  */
 const base = process.argv[2] ?? process.env.PUBLIC_BASE_URL;
 if (!base) throw new Error("Usage: npm run check-listing -- https://your-app.up.railway.app");
 
 const client = withBazaar(new HTTPFacilitatorClient(createFacilitatorConfig()));
-const payTo = process.env.PAY_TO_ADDRESS;
-const catalog = await client.extensions.bazaar.listResources(payTo ? { payTo } : {});
-const mine = catalog.items.filter((r) =>
-  JSON.stringify(r).toLowerCase().includes(new URL(base).host.toLowerCase()),
-);
+const needles = [new URL(base).host.toLowerCase()];
+if (process.env.PAY_TO_ADDRESS) needles.push(process.env.PAY_TO_ADDRESS.toLowerCase());
 
-console.log(
-  `Bazaar catalog: ${catalog.items.length} resources${payTo ? ` paying to ${payTo}` : " (first page)"}`,
-);
+let offset = 0;
+let total = Infinity;
+const mine: unknown[] = [];
+while (offset < total) {
+  const page = await client.extensions.bazaar.listResources({ limit: 100, offset } as never);
+  total = page.pagination?.total ?? 0;
+  mine.push(...page.items.filter((r) => {
+    const j = JSON.stringify(r).toLowerCase();
+    return needles.some((n) => j.includes(n));
+  }));
+  if (page.items.length === 0) break;
+  offset += page.items.length;
+  await new Promise((r) => setTimeout(r, 100));
+}
+
+console.log(`Bazaar catalog: scanned ${offset}/${total} resources`);
 if (mine.length > 0) {
-  console.log(`LISTED — found ${mine.length} entr${mine.length === 1 ? "y" : "ies"} for ${base}:`);
-  for (const r of mine) console.log(JSON.stringify(r, null, 2).slice(0, 800));
+  console.log(`LISTED — found ${mine.length} entr${mine.length === 1 ? "y" : "ies"}:`);
+  for (const r of mine) console.log(JSON.stringify(r).slice(0, 400));
 } else {
-  console.log(
-    `NOT LISTED YET for ${base}. Indexing happens on the first settled payment via the CDP` +
-      " facilitator; if you just self-paid, wait a few minutes and re-run.",
-  );
+  console.log(`NOT LISTED YET for ${base}. Indexing follows the first settled payment; wait and re-run.`);
   process.exit(1);
 }

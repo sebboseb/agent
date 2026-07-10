@@ -43,7 +43,10 @@ export async function callUpstream(body: ChatBody): Promise<UpstreamResult> {
   for (const field of FORWARDED_FIELDS) {
     if (body[field] !== undefined) forwarded[field] = body[field];
   }
-  forwarded.max_tokens = effectiveMaxTokens(body);
+  // GPT-5.x models reject the deprecated `max_tokens`; `max_completion_tokens`
+  // is accepted across the lineup. Buyers may send either — we normalize.
+  delete forwarded.max_tokens;
+  forwarded.max_completion_tokens = effectiveMaxTokens(body);
   forwarded.stream = false;
 
   const res = await fetch(`${cfg.openaiBaseUrl}/chat/completions`, {
