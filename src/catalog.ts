@@ -25,26 +25,41 @@ export function publicEmbeddingsUrl(): string {
   return `${publicBase()}${EMBEDDINGS_PATH}`;
 }
 
+/**
+ * The facilitator rejects payments whose resource.description exceeds 500
+ * chars (verified against CDP 2026-07-11: 521 chars -> schema 400 on every
+ * verify, i.e. a total outage). Fail at boot, never in production.
+ */
+function assertDescriptionLength(text: string, name: string): string {
+  if (text.length > 500) {
+    throw new Error(`${name} is ${text.length} chars — facilitator limit is 500`);
+  }
+  return text;
+}
+
 // Bazaar semantic search ranks on this text (<=500 chars): task verbs agents
 // query for, current model names, and the price hooks (markup + cache).
-export const DESCRIPTION =
+export const DESCRIPTION = assertDescriptionLength(
   "LLM inference API for AI agents: OpenAI-compatible chat completions paid " +
-  "per request in USDC on Base — no account or API key needed. Summarize, " +
-  "classify, extract, translate, generate text and chat with " +
-  `${Object.keys(MODELS).slice(0, 5).join(", ")} and more. Misses billed at ` +
-  `upstream cost + ${Math.round((cfg.markup - 1) * 100)}% on actual token usage (upto scheme); ` +
-  `deterministic repeats (temperature 0) hit our cache and are billed at ` +
-  `${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price — your loops get cheaper ` +
-  "automatically. From $0.001/call, standard OpenAI POST format.";
+    "per request in USDC on Base. No account or API key. Summarize, classify, " +
+    "extract, translate, generate and chat with " +
+    `${Object.keys(MODELS).slice(0, 5).join(", ")} and more. Misses billed at ` +
+    `cost + ${Math.round((cfg.markup - 1) * 100)}% on actual token usage (upto scheme); deterministic ` +
+    `repeats (temperature 0) are cache hits billed at ${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider ` +
+    "price — loops get cheaper automatically. From $0.001/call, standard OpenAI POST format.",
+  "DESCRIPTION",
+);
 
-export const EMBEDDINGS_DESCRIPTION =
+export const EMBEDDINGS_DESCRIPTION = assertDescriptionLength(
   "Text embeddings API for AI agents: OpenAI-compatible /v1/embeddings paid " +
-  "per request in USDC on Base — no account or API key. Embed documents for " +
-  "RAG, semantic search, clustering, deduplication with text-embedding-3-small " +
-  "or text-embedding-3-large. Embeddings are deterministic, so repeated texts " +
-  `hit our cache and bill at ${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price — ` +
-  `re-embedding a corpus costs roughly half. Misses at upstream cost + ` +
-  `${Math.round((cfg.markup - 1) * 100)}%, from $0.001/call. Standard OpenAI POST format.`;
+    "per request in USDC on Base — no account or API key. Embed documents for " +
+    "RAG, semantic search, clustering, deduplication with text-embedding-3-small " +
+    "or text-embedding-3-large. Embeddings are deterministic, so repeated texts " +
+    `hit our cache and bill at ${Math.round(cfg.hitMultiplierPrivate * 100)}% of provider price — ` +
+    `re-embedding a corpus costs roughly half. Misses at cost + ` +
+    `${Math.round((cfg.markup - 1) * 100)}%, from $0.001/call. Standard OpenAI POST format.`,
+  "EMBEDDINGS_DESCRIPTION",
+);
 
 export const EMBEDDINGS_TAGS = [
   "embeddings",
