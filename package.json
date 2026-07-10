@@ -1,0 +1,38 @@
+{
+  "name": "x402-gateway",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "buyer": "tsx src/buyer.ts",
+    "e2e": "tsx test/e2e.ts",
+    "typecheck": "tsc --noEmit",
+    "check-cdp": "tsx test/check-cdp.ts",
+    "check-listing": "tsx test/check-listing.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@coinbase/x402": "^2.1.0",
+    "@hono/node-server": "^2.0.8",
+    "@x402/core": "^2.17.0",
+    "@x402/evm": "^2.17.0",
+    "@x402/extensions": "^2.17.0",
+    "@x402/fetch": "^2.17.0",
+    "@x402/hono": "^2.17.0",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "hono": "^4.12.29"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
+  }
+}
